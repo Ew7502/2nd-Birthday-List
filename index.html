@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Global Birthday List</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; line-height: 1.6; background: #f4f7f6; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+        input { display: block; width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+        button { background: #5c67f2; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; width: 100%; font-size: 16px; }
+        button:hover { background: #4a54e1; }
+        .item { border-bottom: 1px solid #eee; padding: 10px 0; display: flex; justify-content: space-between; align-items: center; }
+        .bought { text-decoration: line-through; color: #888; }
+        .id-badge { background: #e0e0e0; padding: 5px 10px; border-radius: 4px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h2>🎂 Birthday List Creator</h2>
+
+    <div id="setup-section" class="card">
+        <button onclick="createNewList()">Create New List</button>
+        <hr>
+        <p>Or find a list:</p>
+        <input type="text" id="find-id" placeholder="Enter List ID (e.g. x8j2k9)">
+        <button onclick="loadList(document.getElementById('find-id').value)">View List</button>
+    </div>
+
+    <div id="list-section" class="card" style="display:none;">
+        <h3>List ID: <span id="current-id" class="id-badge"></span></h3>
+        <div id="items-container"></div>
+        <hr>
+        <h4>Add Item (Owner Only)</h4>
+        <input type="text" id="item-name" placeholder="Item Name">
+        <input type="text" id="item-price" placeholder="Price">
+        <input type="text" id="item-link" placeholder="Link (URL)">
+        <button onclick="promptAddItem()">Add to List</button>
+    </div>
+
+    <script>
+        // REPLACE THESE with your actual keys from Supabase Dashboard -> Settings -> API
+        const SUPABASE_URL = 'https://your-project-url.supabase.co';
+        const SUPABASE_KEY = 'your-anon-key-here';
+        const supabase = supabase.createClient(https://svhwpscnnxqwmzhmcqda.supabase.co/rest/v1/,sb_publishable_jTRYYEXlB-0h1SbUwvIejg_sRuM7Fsa);
+
+        let currentListID = '';
+
+        // 1. CREATE A NEW LIST
+        async function createNewList() {
+            const password = prompt("Set a password to manage this list:");
+            if (!password) return;
+
+            const shareCode = Math.random().toString(36).substring(2, 8);
+            
+            const { error } = await supabase
+                .from('lists')
+                .insert([{ share_code: shareCode, password_hash: password }]);
+
+            if (error) alert("Error creating list: " + error.message);
+            else {
+                alert("Success! Your List ID is: " + shareCode);
+                loadList(shareCode);
+            }
+        }
+
+        // 2. LOAD A LIST BY ID
+        async function loadList(id) {
+            currentListID = id;
+            const { data: listData } = await supabase.from('lists').select('id').eq('share_code', id).single();
+            
+            if (!listData) {
+                alert("List not found!");
+                return;
+            }
+
+            const { data: items } = await supabase.from('items').select('*').eq('list_id', listData.id);
+            
+            document.getElementById('setup-section').style.display = 'none';
+            document.getElementById('list-section').style.display = 'block';
+            document.getElementById('current-id').innerText = id;
+            
+            const container = document.getElementById('items-container');
+            container.innerHTML = items.length ? '' : '<p>No items yet.</p>';
+            
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'item';
+                div.innerHTML = `
+                    <div class="${item.is_bought ? 'bought' : ''}">
+                        <strong>${item.name}</strong> - $${item.price} <br>
+                        <a href="${item.link}" target="_blank">View Link</a>
+                    </div>
+                    ${item.is_bought ? '<span>✅ Bought</span>' : `<button style="width:auto;" onclick="markBought('${item.id}')">I bought this</button>`}
+                    <button style="width:auto; background:red; margin-left:5px;" onclick="promptDelete('${item.id}')">X</button>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // 3. ADD ITEM (Uses the Secure RPC we made in the previous message)
+        async function promptAddItem() {
+            const password = prompt("Enter list password:");
+            const name = document.getElementById('item-name').value;
+            const price = document.getElementById('item-price').value;
+            const link = document.getElementById('item-link').value;
+
+            const { error } = await supabase.rpc('add_item_secure', {
+                p_code: currentListID,
+                p_pass: password,
+                i_name: name,
+                i_price: price,
+                i_link: link
+            });
+
+            if (error) alert("Access Denied: " + error.message);
+            else loadList(currentListID);
+        }
+
+        // 4. MARK AS BOUGHT (Publicly available)
+        async function markBought(itemId) {
+            await supabase.from('items').update({ is_bought: true }).eq('id', itemId);
+            loadList(currentListID);
+        }
+
+        // 5. DELETE ITEM (Owner Only)
+        async function promptDelete(itemId) {
+            const password = prompt("Enter list password to delete:");
+            // For simplicity, we check if password exists in the list table
+            const { data } = await supabase.from('lists').select('id').eq('share_code', currentListID).eq('password_hash', password).single();
+            
+            if (data) {
+                await supabase.from('items').delete().eq('id', itemId);
+                loadList(currentListID);
+            } else {
+                alert("Wrong password!");
+            }
+        }
+    </script>
+</body>
+</html>
